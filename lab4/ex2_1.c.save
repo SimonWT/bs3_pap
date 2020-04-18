@@ -1,0 +1,33 @@
+#include <stdio.h>
+#include "mpi.h"
+
+int main(int argc, char** argv){
+
+    int rank, size;
+    int msg[10];     
+
+    MPI_Status status;
+    MPI_Init(&argc,&argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+   
+
+    int pid = getpid(void);
+    int pid_sum = 0;
+
+    printf("Hello␣i'm  %d/%d pid: %d\n", rank, size, pid);
+    MPI_Reduce(
+    void* send_data,
+    void* recv_data,
+    int count,
+    MPI_Datatype datatype,
+    MPI_Op op,
+    int root,
+    MPI_Comm communicator)
+    MPI_Bcast(msg, 10, MPI_INT, 0, MPI_COMM_WORLD);
+    printf("rank␣%d:␣I␣received_ %d\n", rank);
+     
+    MPI_Finalize();
+    return 0;
+}
+
