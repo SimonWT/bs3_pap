@@ -12,6 +12,16 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
     // int rank = my_rank(); 
     // int P = num_procs();
     MPI_Status status;
+    
+    if( rank == 0 ){
+        printMatrix(dimension, A);
+
+        printMatrix(dimension, B);
+
+    }
+
+    
+    printf("%d %d \n", rank, P);
 
     int r, n;
     n = dimension;
@@ -20,27 +30,43 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
 
     // tempS = B; /* copy of the values */ 
     // memcpy(B, tempS, dimension * dimension)
-    printf("rank %d", rank);
+    printf("rank %d \n", rank);
     // Distribute the A rows to process
-    if(rank == 0){
+    // if(rank == 0){
         MPI_Scatter( A, r * n, MPI_DOUBLE, distA, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
         // printf("A");
-
-        MPI_Scatter( C, n * n, MPI_DOUBLE, distC, n * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
+        MPI_Scatter( C, r * n, MPI_DOUBLE, distC, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
 
         // Distribute the B rows to process
         MPI_Scatter( B, r * n, MPI_DOUBLE, tempS, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
-    }
+    // }
     
+    // MPI_Send(tempS, r * n, MPI_DOUBLE, (rank+1) % P, rank, MPI_COMM_WORLD);
+    // MPI_Recv(tempR, r * n, MPI_DOUBLE, (rank-1) % P, (rank-1) % P, MPI_COMM_WORLD, &status);
 
     int step = 0;
     for(step = 0; step < P; step++){
+        printf("iteration: %d \n\n", step);
         MPI_Send(tempS, r * n, MPI_DOUBLE, (rank+1) % P, rank, MPI_COMM_WORLD);
-        // Send(tempS, (rank+1) % P);
+        printf(" temps S: \n");
+        int t, y;
+        for(t= 0; t < r; t++){
+            for(y= 0; y < n; y++) {
+                printf("\t %.1lf",tempS[t][y]);
+            }
+            printf("\n");
+        }
 
         MPI_Recv(tempR, r * n, MPI_DOUBLE, (rank-1) % P, (rank-1) % P, MPI_COMM_WORLD, &status);
+        printf(" temps R: \n");
+        for(t= 0; t < r; t++){
+            for(y= 0; y < n; y++) {
+                printf("\t %.1lf",tempR[t][y]);
+            }
+            printf("\n");
+        }
         // Recv(tempR, (rank−1) % P)
-        int block = (rank - step) % P;
+        int block = abs((rank - step) % P);
 
         int l = 0;
         int j = 0;
@@ -53,16 +79,37 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
                         distC[i][ l * r + j] = distC[i][ l * r + j] + distA[i][block * r + k] * tempS[k][l*r+j];
                     }
                 }
-                memcpy(tempR, tempS, r * n);
-                // tempS = tempR; 
             }
+        }
+        printf("step distC, block:%d \n", block);
+        //memcpy(tempS, tempR, r * n);
+        for(t= 0; t < r; t++){
+            for(y= 0; y < n; y++) {
+                printf("\t %.1lf",distC[t][y]);
+                tempS[t][y] = tempR[t][y];
+            }
+            printf("\n");
         }
     }
     // MPI_( A, r * n, MPI_DOUBLE, distA, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
-    if(rank == 0){
-        MPI_Gather( C, r * n, MPI_DOUBLE, C, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    printf("\n");
+    printf(" dist C: \n");
+    int t, y;
+    for(t= 0; t < r; t++){
+        for(y= 0; y < n; y++) {
+            printf("\t %.1lf",distC[t][y]);
+        }
+        printf("\n");
     }
-    
+    // printMatrix(dimension, distC);
+    MPI_Gather(distC, r * n, MPI_DOUBLE, C, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        // printMatrix(dimension, C);
+    if(rank == 0){
+        printf("FINAL:  ");
+        printMatrix(dimension, C);
+    }
+    // }
+    printf("end\n");
 }
 
 
@@ -115,7 +162,7 @@ int main(int argc, char *argv[])
             
             start = MPI_Wtime();
             
-            // parallelMatrixMultiplication_REF(mat_size, A, B , C);
+            sequentialMatrixMultiplication_REF(mat_size, A, B , C);
             
             experiments [exp] = MPI_Wtime() - start;
         }
@@ -136,7 +183,7 @@ int main(int argc, char *argv[])
             initMatrixZero(mat_size, C);
             
             start = MPI_Wtime();
-            print("suka")
+            // print("suka")
             parallelMatrixMultiplication(my_rank, w_size, mat_size, A, B , C);
             
             experiments [exp] = MPI_Wtime() - start;
@@ -169,11 +216,11 @@ int main(int argc, char *argv[])
     }
 
     /* check for correctness */
+    // if(my_rank == 0){
+    parallelMatrixMultiplication(my_rank, w_size, mat_size, A, B , C);    
+    
     if(my_rank == 0){
-        parallelMatrixMultiplication(my_rank, w_size, mat_size, A, B , C);
-        
-        // parallelMatrixMultiplication_REF(mat_size, A_check, B_check , C_check);
-
+        sequentialMatrixMultiplication_REF(mat_size, A_check, B_check , C_check);
 
         if(checkMatricesEquality(mat_size, C, C_check)){
             printf("\t CORRECT matrix multiplication result \n");
