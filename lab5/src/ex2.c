@@ -6,56 +6,127 @@
 #include "utils.h"
 
 /* a matrix multiplication without locality (column-first)*/
-void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *B, double *C)
-{
+void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *B, double *C){
+
+    int dim = (int) sqrt(P);
+    int dims[2] = { dim, dim };
+    int periods[2] = { 1, 1 };
+    int left, right, up, down;
+
     MPI_Status status;
+    MPI_Comm cart_comm;
 
-    int r, n;
-    n = dimension;
-    r = n / P;
-    double tempC[n][n], tempA[n][n], tempB[n][n], diagonal[n];
+    MPI_Dims_create(P, 2, dims); //Creates a division of processors in a cartesian grid
+    MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 1, &cart_comm);//Makes a new communicator ordered in cartesian grid
 
-    int z;
-    int y;
-    int w;
-    for(z = 0; z < n; z++){
-        // Seting new diagonal
+    MPI_Cart_shift(cart_comm, 0, 1, &left, &right);
+    MPI_Cart_shift(cart_comm, 1, 1, &up, &down); 
+
+    int coords[2];
+    MPI_Cart_coords(cart_comm, rank, 2, coords);
+
+    int n = dimension;
+    int r = n / dim;    
+
+    double *locA, *locB, *locC;
+
+    locA = allocMatrix(r);
+    locB = allocMatrix(r);
+    locC = allocMatrix(r);
+
+    initMatrixZero(r, locA);
+    initMatrix(r, locB);
+    initMatrixZero(r, locC);
+
+    // int a,b;
+    // for (a = 0; a < r; a++){
+    //     for(b=0; b<r; b++){
+    //         locB[a * r + b] = B[(r*coords[0] + a) * r + (r * coords[1] + b)];
+    //     }
+    // }
+
+    double diagonal[n];
+
+    // printf("%d. locB:\n",rank);
+    // printMatrix(r, locB);
+
+    int step;
+    int y, w;
+    int u,g;
+    // int s =0;
+    // for(a =0; a < n; a++)
+    //   for(s = 0; s< n; s++)
+    //     printf("%f ", A[a * n + s]);
+    // printf("\n");
+
+    // printf("before for loop\n");
+    for(step = 0; step < n; step++){
+        //calculate diagonal
         if(rank == 0){
+            // printf("%d. diag:\n",rank);
             for(y = 0; y < n; y++){
-                for(w = z; w < n; w++){
-                    diagonal[y] = A[y][ w % n ] 
-                }
+                diagonal[y] = A[y*r + (y + step) % n];
+                // printf("choose from %d %d = %f \n", y,(y + step) % n , A[y][(y + step) % n]);
+                // printf("%f ", diagonal[y]);
             }
+            // printf("\n");
+            
+            // printMatrix(r, locB);
         }
-        //broadcast from 0
-        int g = 0;
-        int h = 0;
-        for (g = 0; g < n; g++){
-            for(h = 0; h < n; h++){
-                tempA[g][h] = diagonal[g]
-            }
-        }
+
+        // printf("after calc diag\n");
+        //broadcast diagonal
+        MPI_Bcast(diagonal, P * n, MPI_INT, 0, MPI_COMM_WORLD);
+        // printf("after bcast \n");
+        //set corresponding value
         
-        int l = 0;
-        int j = 0;
-        int k = 0;
-        int i = 0;
+        // printf("gets coordinat %d %d \n", coords[0], coords[1]);
 
-        int block = abs((rank - step) % P);
-
-        for( l = 0; l < P; l++){
-            for( i = 0; i < r; i++){
-                for( j = 0; j < r; j++ ) {
-                    for(k = 0; k < r; k++ ){ 
-                        tempC[i][ l * r + j] = tempC[i][ l * r + j] + tempA[i][block * r + k] * tempB[i][block * r + k];
-                    }
-                }
+        // locA = diagonal[coords[0]];
+        double row;
+        for(u=0; u< r; u++){
+            row = diagonal[u + coords[0]*r];
+            // printf("%d diagonal:\t", rank);
+            // printf("%f ", row);
+            for(g=0; g<r; g++){
+                locA[u * r + g] = row;
+            }
+        }
+        printf("\n");
+        printf("%d my locB\n", rank);
+        printMatrix(r, locB);
+        //calculate local C
+        for(u=0; u< r; u++){
+            for(g=0; g<r; g++){
+                locC[u * r + g] = locC[u*r + g] + locA[u*r + g] * locB[u*r + g];
+            }
+        }
+        // locC = locC + locA * locB;
+        double row1[r];
+        int o;
+        for(o = 0; o < r; o++)
+            row1[o] = locB[o];
+        // printf("my locC= %f \n", locC);
+        //shift B
+        MPI_Sendrecv_replace(&row1, r, MPI_INT, up, 0, down, 0, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
+        
+        for(u=0; u< r; u++){
+            for(g=0; g < r; g++){
+                if(u == r - 1)
+                     locB[u * r + g] = row1[g];
+                else
+                    locB[u * r + g] = locB[(u + 1)* r + g ];
             }
         }
 
-        //B shifting
+	    MPI_Barrier(cart_comm); // Blocks until all processes in the communicator have reached this routine.
 
     }
+
+    printf("%d . my locC: \n", rank);
+    printMatrix(r, locC);
+
+
 }
 
 
@@ -156,7 +227,10 @@ int main(int argc, char *argv[])
         A_check = createMatrixCopy(mat_size, A);
         B_check = createMatrixCopy(mat_size, B);
         C_check = allocMatrix(mat_size);
-
+// if(my_rank == 0){
+        printMatrix(mat_size, A);
+        printMatrix(mat_size, B);
+// }
         initMatrixZero(mat_size, C_check);
     }
 

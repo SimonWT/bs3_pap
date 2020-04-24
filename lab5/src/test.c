@@ -1,55 +1,43 @@
 #include <stdio.h>
 #include <math.h>
 #include "mpi.h"
+#include "utils.h"
 
-void shiftUp(double *Array, int mat_size, int up, int down, MPI_Comm communicator){
-    MPI_Sendrecv_replace(Array, mat_size, MPI_INT, up, 0, down, 0, communicator, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
-	MPI_Barrier(&communicator); // Blocks until all processes in the communicator have reached this routine.
-}
+void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *B, double *C){
 
-int main(int argc, char** argv){
-
-    int rank, size;
-    // int msg[10]; 
-    // int rbuf[10];    
+    int dim = (int) sqrt(P);
+    int dims[2] = { dim, dim };
+    int periods[2] = { 1, 1 };
+    int left, right, up, down;
 
     MPI_Status status;
     MPI_Comm cart_comm;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int dims[2] = {2, 2};
-    int periods[2] = {1,1};
-    int left, right, up, down;
-
-    MPI_Dims_create(size, 2, dims); //Creates a division of processors in a cartesian grid
+    MPI_Dims_create(P, 2, dims); //Creates a division of processors in a cartesian grid
     MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 1, &cart_comm);//Makes a new communicator ordered in cartesian grid
 
-    MPI_Cart_shift(cart_comm,0,1,&left,&right); //
-    MPI_Cart_shift(cart_comm,1,1,&up,&down); // 
-    
+    MPI_Cart_shift(cart_comm, 0, 1, &left, &right);
+    MPI_Cart_shift(cart_comm, 1, 1, &up, &down); 
 
-	double A[2][2] = {{1, 2},{1, 2}};
-    double locA, locB, locC;
-    locC = 0;
-    double B[2][2] = {{1, 1},{0, 0}};
+    int n = dimension;
+    int r = n / dim;    
 
-    double diagonal[2];
+    double *locA, *locB, *locC;
 
-    if ( rank %2 == 0){
-        locB = 1;
-    }else{
-        locB = 0;
-    }
+    locA = allocMatrix(r);
+    locB = allocMatrix(r);
+    locC = allocMatrix(r);
+
+    initMatrixZero(r, locA);
+    initMatrix(r, locB);
+    initMatrixZero(r, locC);
+
+    double diagonal[n];
 
     int coords[2];
 
-
-
     int step;
     int y, w;
-    int n = 2;
 
     // int a,s =0;
     // for(a =0; a < n; a++)
@@ -62,7 +50,7 @@ int main(int argc, char** argv){
         //calculate diagonal
         if(rank == 0){
             for(y = 0; y < n; y++){
-                diagonal[y] = A[y][(y + step) % n];
+                diagonal[y] = A[y*r + (y + step) % n];
                 // printf("choose from %d %d = %f \n", y,(y + step) % n , A[y][(y + step) % n]);
                 // printf("%f ", diagonal[y]);
             }
@@ -70,34 +58,75 @@ int main(int argc, char** argv){
         }
         // printf("after calc diag\n");
         //broadcast diagonal
-        MPI_Bcast(diagonal, 4, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(diagonal, P, MPI_INT, 0, MPI_COMM_WORLD);
         // printf("after bcast \n");
         //set corresponding value
         MPI_Cart_coords(cart_comm, rank, 2, coords);
         // printf("gets coordinat %d %d \n", coords[0], coords[1]);
-        locA = diagonal[coords[0]];
-        printf("my locA= %f \n", locA);
+
+        // locA = diagonal[coords[0]];
+        double row;
+        int u,g;
+        for(u=0; u< r; u++){
+            row = diagonal[u + coords[0]*r];
+            for(g=0; g<r; g++){
+                locA[u * r + g] = row;
+            }
+        }
+
+        // printf("my locA= %f \n", locA);
         //calculate local C
-        locC = locC + locA * locB;
-        printf("my locC= %f \n", locC);
+        for(u=0; u< r; u++){
+            for(g=0; g<r; g++){
+                locC[u*r + g] = locC[u*r + g] + locA[u*r + g] * locB[u*r + g];
+            }
+        }
+        // locC = locC + locA * locB;
+        // printf("my locC= %f \n", locC);
         //shift B
-        MPI_Sendrecv_replace(&locB, 1, MPI_INT, up, 0, down, 0, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
+        MPI_Sendrecv_replace(&locB, n, MPI_INT, up, 0, down, 0, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
 	    MPI_Barrier(cart_comm); // Blocks until all processes in the communicator have reached this routine.
 
     }
 
-	printf("Hello␣i'm  %d/%d, (%d, %d)\n", rank, size, coords[0], coords[1]);
-    
-    // if (rank == 3){
-        printf("my  neighbors: %d %d %d %d\n", left, up, right, down);
+
+}
+
+int main(int argc, char** argv){
+
+    double *A, *B ,*C;
+    unsigned int mat_size = 0;
+
+    if(argc != 2){
+        printf("usage: %s matrix_size\n",argv[0]);
+        MPI_Finalize();
+        return 0;
+    }
+    // else{
+    mat_size = atoi(argv[1]);
     // }
-    
-    // printf("rank␣%d:␣I␣received\n", rank);
-    // int i;
-	// for(i = 0; i < 2; i++){
-	// 	printf("%d ",rbuf[i]);
-	// }
-    // printf("\n");
+
+    A = allocMatrix(mat_size);
+    B = allocMatrix(mat_size);
+    C = allocMatrix(mat_size);
+
+    initMatrix(mat_size, A);
+    initMatrix(mat_size, B);
+    initMatrixZero(mat_size, C);
+
+    int rank, size;
+
+    MPI_Status status;
+    MPI_Comm cart_comm;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    foxMatrixMultiplication(rank, size, mat_size, A, B, C);
+
+    // free(A);
+    // free(B);
+    // free(C);
     MPI_Finalize();
     return 0;
 }
