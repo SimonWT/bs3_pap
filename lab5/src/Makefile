@@ -2,7 +2,7 @@ CC = mpicc
 CFLAGS = 
 LDFLAGS =
 
-EXEC = 	ex3.run
+EXEC = 	ex2.run
 
 HEADER_FILES = $(wildcard *.h)
 
