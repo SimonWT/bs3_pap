@@ -37,8 +37,43 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     initMatrixZero(r, locA);
     initMatrixZero(r, locC);
 
+    //some strange part
+    int starts[2] = { 0,0 };
+    int localSize[2] = { r, r };
+    int globalSize[2] = { n, n };
+    MPI_Datatype type, subarrtype;
+	MPI_Type_create_subarray(2, globalSize, localSize, starts, MPI_ORDER_C, MPI_DOUBLE, &type);
+	MPI_Type_create_resized(type, 0, r * sizeof(double), &subarrtype);
+	MPI_Type_commit(&subarrtype);
+
+    // Scatter the array to all processors
+	int* sendCounts = (int*)malloc(sizeof(int) * P);
+	int* displacements = (int*)malloc(sizeof(int) * P);
+
+    int i, j = 0;
+	if (rank == 0) {
+		for (i = 0; i < P; i++) {
+			sendCounts[i] = 1;
+		}
+		int disp = 0;
+        // printf("DIPLACEMENT:\n");
+		for (i = 0; i < dim; i++) {
+			for (j = 0; j < dim; j++) {
+				displacements[i * dim + j] = disp;
+                disp += 1;
+			}
+            disp += (r - 1) * dim;
+            // printf("\n");
+		}
+	}
+
     //distribute B
-    MPI_Scatter(B, r*r, MPI_DOUBLE, locB, r*r, MPI_DOUBLE, 0, cart_comm); 
+    MPI_Scatterv(B, sendCounts, displacements, subarrtype, locB,
+		n * n / (P), MPI_DOUBLE,
+		0, MPI_COMM_WORLD);
+
+    // printf("(%d). Local B: \n", rank);
+    // printMatrix(r, locB);
 
     double diagonal[n];
 
@@ -51,29 +86,37 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
         //calculate diagonal
         if(rank == 0){
             for(y = 0; y < n; y++){
-                diagonal[y] = A[y*r + (y + step) % n];
+                diagonal[y] = A[y * n + (y + step) % n];
+                // printf("(%d,%d)", y, (y + step) % n);
+                // printf(" %.1lf", diagonal[y]);
             }
+            // printf("\n");
         }
 
        
         //broadcast diagonal
-        MPI_Bcast(diagonal, P * n, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(diagonal, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     
         //set corresponding value to each row
         double row;
         for(u=0; u< r; u++){
-            row = diagonal[u + coords[0]*r];
+            row = diagonal[u + coords[0] * r];
+            // printf("(%d). row = %.1f\n", rank, row);
             for(g=0; g<r; g++){
                 locA[u * r + g] = row;
             }
         }
+        // printf("%d. locA:\n", rank);
+        // printMatrix(r, locA);
 
         //calculate local C
         for(u=0; u< r; u++){
             for(g=0; g<r; g++){
-                locC[u * r + g] = locC[u*r + g] + locA[u*r + g] * locB[u*r + g];
+                locC[u * r + g] = locC[u * r + g] + locA[u * r + g] * locB[u * r + g];
             }
         }
+        // printf("%d. locC:\n", rank);
+        // printMatrix(r, locC);
         
         //allocate row which be shift to upper row of processes
         double row1[r];
@@ -82,7 +125,8 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
             row1[o] = locB[o];
 
         //shift B
-        MPI_Sendrecv_replace(&row1, r, MPI_INT, up, 0, down, 0, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
+        MPI_Cart_shift(cart_comm, 0, 1, &up, &down);
+        MPI_Sendrecv_replace(&(row1[0]), r, MPI_DOUBLE, up, 1, down, 1, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
         
         //set income row and shift old
         for(u=0; u< r; u++){
@@ -100,13 +144,19 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     
 
     //Gather the local C to C in root process
-    MPI_Gather(locC, r * r, MPI_DOUBLE, C, r * r, MPI_DOUBLE, 0, cart_comm);
+    // MPI_Gather(locC, r * r, MPI_DOUBLE, C, r * r, MPI_DOUBLE, 0, cart_comm);
+    // MPI_Scatterv(locC, sendCounts, displacements, subarrtype, locB,
+	// 	n * n / (P), MPI_DOUBLE,
+	// 	0, MPI_COMM_WORLD);
+    MPI_Gatherv(locC, n * n / (P), MPI_DOUBLE,
+		C, sendCounts, displacements, subarrtype,
+		0, MPI_COMM_WORLD);
     
     //Print result
-    if(rank == 0 ){
-        printf("FINAL C:\t");
-        printMatrix(n, C);
-    }
+    // if(rank == 0 ){
+    //     printf("FINAL C:\t");
+    //     printMatrix(n, C);
+    // }
 
 }
 
@@ -227,6 +277,7 @@ int main(int argc, char *argv[])
         }
         else{
             printf("\t FAILED matrix multiplication !!! \n");
+            printMatrix(mat_size, C_check);
         }
 
         /* printMatrix(mat_size, C); */
