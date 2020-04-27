@@ -5,11 +5,15 @@
 
 #include "utils.h"
 
-/* a matrix multiplication without locality (column-first)*/
+/* square a matrix multiplication */
 void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *B, double *C){
 
+    // Take square root of inputed num of process
+    // and set this value as side of catesian grid
     int dim = (int) sqrt(P);
+    //Set dimentions of grid
     int dims[2] = { dim, dim };
+    //Make perodic access to each dimention in gid
     int periods[2] = { 1, 1 };
     int left, right, up, down;
 
@@ -28,6 +32,7 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     int n = dimension;
     int r = n / dim;    
 
+    // init local matrix blocks
     double *locA, *locB, *locC;
 
     locA = allocMatrix(r);
@@ -38,78 +43,50 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     initMatrix(r, locB);
     initMatrixZero(r, locC);
 
-    // int a,b;
-    // for (a = 0; a < r; a++){
-    //     for(b=0; b<r; b++){
-    //         locB[a * r + b] = B[(r*coords[0] + a) * r + (r * coords[1] + b)];
-    //     }
-    // }
-
     double diagonal[n];
-
-    // printf("%d. locB:\n",rank);
-    // printMatrix(r, locB);
-
+    
     int step;
     int y, w;
     int u,g;
-    // int s =0;
-    // for(a =0; a < n; a++)
-    //   for(s = 0; s< n; s++)
-    //     printf("%f ", A[a * n + s]);
-    // printf("\n");
 
-    // printf("before for loop\n");
+    // Main loop
     for(step = 0; step < n; step++){
         //calculate diagonal
         if(rank == 0){
-            // printf("%d. diag:\n",rank);
             for(y = 0; y < n; y++){
-                diagonal[y] = A[y*r + (y + step) % n];
-                // printf("choose from %d %d = %f \n", y,(y + step) % n , A[y][(y + step) % n]);
-                // printf("%f ", diagonal[y]);
+                diagonal[y] = A[y * n + (y + step) % n];
             }
-            // printf("\n");
-            
-            // printMatrix(r, locB);
         }
 
-        // printf("after calc diag\n");
         //broadcast diagonal
-        MPI_Bcast(diagonal, P * n, MPI_INT, 0, MPI_COMM_WORLD);
-        // printf("after bcast \n");
-        //set corresponding value
-        
-        // printf("gets coordinat %d %d \n", coords[0], coords[1]);
+        MPI_Bcast(diagonal, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-        // locA = diagonal[coords[0]];
+        //set corresponding value of broadcasted diagonal to each row
         double row;
         for(u=0; u< r; u++){
             row = diagonal[u + coords[0]*r];
-            // printf("%d diagonal:\t", rank);
-            // printf("%f ", row);
             for(g=0; g<r; g++){
                 locA[u * r + g] = row;
             }
         }
-        printf("\n");
-        printf("%d my locB\n", rank);
-        printMatrix(r, locB);
+
         //calculate local C
         for(u=0; u< r; u++){
             for(g=0; g<r; g++){
                 locC[u * r + g] = locC[u*r + g] + locA[u*r + g] * locB[u*r + g];
             }
         }
-        // locC = locC + locA * locB;
+
+        //allocate row which be shift to upper row of processes
         double row1[r];
         int o;
         for(o = 0; o < r; o++)
             row1[o] = locB[o];
-        // printf("my locC= %f \n", locC);
+
         //shift B
-        MPI_Sendrecv_replace(&row1, r, MPI_INT, up, 0, down, 0, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
+        MPI_Sendrecv_replace(&(row1[0]), r, MPI_DOUBLE, up, 1, down, 1, cart_comm, MPI_STATUS_IGNORE);
         
+        //set income row and shift remaining rows
         for(u=0; u< r; u++){
             for(g=0; g < r; g++){
                 if(u == r - 1)
@@ -119,14 +96,12 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
             }
         }
 
-	    MPI_Barrier(cart_comm); // Blocks until all processes in the communicator have reached this routine.
+        // Blocks until all processes in the communicator have reached this routine.
+	    MPI_Barrier(cart_comm); 
 
     }
 
-    printf("%d . my locC: \n", rank);
-    printMatrix(r, locC);
-
-
+    //In next erxercise here will be Gather operation
 }
 
 
@@ -227,10 +202,7 @@ int main(int argc, char *argv[])
         A_check = createMatrixCopy(mat_size, A);
         B_check = createMatrixCopy(mat_size, B);
         C_check = allocMatrix(mat_size);
-// if(my_rank == 0){
-        printMatrix(mat_size, A);
-        printMatrix(mat_size, B);
-// }
+
         initMatrixZero(mat_size, C_check);
     }
 
@@ -247,9 +219,6 @@ int main(int argc, char *argv[])
         else{
             printf("\t FAILED matrix multiplication !!! \n");
         }
-
-        /* printMatrix(mat_size, C); */
-        /* printMatrix(mat_size, C_check); */
         
         free(A_check);
         free(B_check);

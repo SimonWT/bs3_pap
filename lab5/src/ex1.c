@@ -26,11 +26,14 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
 
     int step = 0;
     for(step = 0; step < P; step++){
+        //Send the part of B to next process
         MPI_Send(tempS, r * n, MPI_DOUBLE, (rank+1) % P, rank, MPI_COMM_WORLD);
+        //Recive the part of B to previus process
         MPI_Recv(tempR, r * n, MPI_DOUBLE, (rank-1) % P, (rank-1) % P, MPI_COMM_WORLD, &status);
     
         int block = abs((rank - step) % P);
 
+        //locl computation C
         int l = 0;
         int j = 0;
         int k = 0;
@@ -44,6 +47,7 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
                 }
             }
         }
+
         int t, y;
         for(t=0; t < r; t++){
             for(y= 0; y < n; y++) {
@@ -53,10 +57,6 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
     }
     
     MPI_Gather(distC, r * n, MPI_DOUBLE, C, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    if(rank == 0){
-        // printMatrix(dimension, C);
-    }
 }
 
 

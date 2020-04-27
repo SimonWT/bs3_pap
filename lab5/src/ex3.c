@@ -5,11 +5,15 @@
 
 #include "utils.h"
 
-/* a matrix multiplication without locality (column-first)*/
+/* a square matrix multiplication */
 void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *B, double *C){
 
+    // Take square root of inputed num of process
+    // and set this value as side of catesian grid
     int dim = (int) sqrt(P);
+    //Set dimentions of grid
     int dims[2] = { dim, dim };
+    //Make perodic access to each dimention in gid
     int periods[2] = { 1, 1 };
     int left, right, up, down;
 
@@ -28,6 +32,7 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     int n = dimension;
     int r = n / dim;    
 
+    // init local matrix blocks
     double *locA, *locB, *locC;
 
     locA = allocMatrix(r);
@@ -37,33 +42,36 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
     initMatrixZero(r, locA);
     initMatrixZero(r, locC);
 
-    //some strange part
+    // MEMORY MANAGMENT PART
+
     int starts[2] = { 0,0 };
     int localSize[2] = { r, r };
     int globalSize[2] = { n, n };
+
+    /// Create subtype for correct distributing B matrix
     MPI_Datatype type, subarrtype;
 	MPI_Type_create_subarray(2, globalSize, localSize, starts, MPI_ORDER_C, MPI_DOUBLE, &type);
 	MPI_Type_create_resized(type, 0, r * sizeof(double), &subarrtype);
 	MPI_Type_commit(&subarrtype);
 
-    // Scatter the array to all processors
+    // Create the arrays which needs to make Scatterv
 	int* sendCounts = (int*)malloc(sizeof(int) * P);
 	int* displacements = (int*)malloc(sizeof(int) * P);
 
     int i, j = 0;
 	if (rank == 0) {
+        // Setting array which indicated to wich process send the data
 		for (i = 0; i < P; i++) {
 			sendCounts[i] = 1;
 		}
 		int disp = 0;
-        // printf("DIPLACEMENT:\n");
+        // Setting the diplacements values for each process
 		for (i = 0; i < dim; i++) {
 			for (j = 0; j < dim; j++) {
 				displacements[i * dim + j] = disp;
                 disp += 1;
 			}
             disp += (r - 1) * dim;
-            // printf("\n");
 		}
 	}
 
@@ -72,42 +80,36 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
 		n * n / (P), MPI_DOUBLE,
 		0, MPI_COMM_WORLD);
 
-    // printf("(%d). Local B: \n", rank);
-    // printMatrix(r, locB);
 
     double diagonal[n];
 
     int step;
-    int y, w;
+    int y,w;
     int u,g;
 
-    // printf("before for loop\n");
+    // Main loop
     for(step = 0; step < n; step++){
+
         //calculate diagonal
         if(rank == 0){
             for(y = 0; y < n; y++){
                 diagonal[y] = A[y * n + (y + step) % n];
-                // printf("(%d,%d)", y, (y + step) % n);
-                // printf(" %.1lf", diagonal[y]);
             }
-            // printf("\n");
         }
 
        
         //broadcast diagonal
         MPI_Bcast(diagonal, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     
-        //set corresponding value to each row
+        //set corresponding value of broadcasted diagonal to each row
         double row;
         for(u=0; u< r; u++){
             row = diagonal[u + coords[0] * r];
-            // printf("(%d). row = %.1f\n", rank, row);
             for(g=0; g<r; g++){
                 locA[u * r + g] = row;
             }
         }
-        // printf("%d. locA:\n", rank);
-        // printMatrix(r, locA);
+
 
         //calculate local C
         for(u=0; u< r; u++){
@@ -115,9 +117,7 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
                 locC[u * r + g] = locC[u * r + g] + locA[u * r + g] * locB[u * r + g];
             }
         }
-        // printf("%d. locC:\n", rank);
-        // printMatrix(r, locC);
-        
+
         //allocate row which be shift to upper row of processes
         double row1[r];
         int o;
@@ -126,9 +126,9 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
 
         //shift B
         MPI_Cart_shift(cart_comm, 0, 1, &up, &down);
-        MPI_Sendrecv_replace(&(row1[0]), r, MPI_DOUBLE, up, 1, down, 1, cart_comm, MPI_STATUS_IGNORE); //Sends and receives using a single buffer
+        MPI_Sendrecv_replace(&(row1[0]), r, MPI_DOUBLE, up, 1, down, 1, cart_comm, MPI_STATUS_IGNORE);
         
-        //set income row and shift old
+        //set income row and shift remaining rows
         for(u=0; u< r; u++){
             for(g=0; g < r; g++){
                 if(u == r - 1)
@@ -138,26 +138,15 @@ void foxMatrixMultiplication(int rank, int P, int dimension, double *A, double *
             }
         }
 
-	     // Blocks until all processes in the communicator have reached this routine.
-         MPI_Barrier(cart_comm);
+	    // Blocks until all processes in the communicator have reached this routine.
+        MPI_Barrier(cart_comm);
     }
     
 
     //Gather the local C to C in root process
-    // MPI_Gather(locC, r * r, MPI_DOUBLE, C, r * r, MPI_DOUBLE, 0, cart_comm);
-    // MPI_Scatterv(locC, sendCounts, displacements, subarrtype, locB,
-	// 	n * n / (P), MPI_DOUBLE,
-	// 	0, MPI_COMM_WORLD);
     MPI_Gatherv(locC, n * n / (P), MPI_DOUBLE,
 		C, sendCounts, displacements, subarrtype,
 		0, MPI_COMM_WORLD);
-    
-    //Print result
-    // if(rank == 0 ){
-    //     printf("FINAL C:\t");
-    //     printMatrix(n, C);
-    // }
-
 }
 
 
@@ -190,8 +179,7 @@ int main(int argc, char *argv[])
     if(my_rank == 0){
 
         printf("test with a matrix of size %u x %u\n", mat_size, mat_size);
-        // printf("blyath %d %d ", my_rank, w_size);
-
+        
         A = allocMatrix(mat_size);
         B = allocMatrix(mat_size);
         C = allocMatrix(mat_size);
@@ -266,7 +254,7 @@ int main(int argc, char *argv[])
     }
 
     /* check for correctness */
-    // if(my_rank == 0){
+
     foxMatrixMultiplication(my_rank, w_size, mat_size, A, B , C);    
     
     if(my_rank == 0){
@@ -279,10 +267,7 @@ int main(int argc, char *argv[])
             printf("\t FAILED matrix multiplication !!! \n");
             printMatrix(mat_size, C_check);
         }
-
-        /* printMatrix(mat_size, C); */
-        /* printMatrix(mat_size, C_check); */
-        
+  
         free(A_check);
         free(B_check);
         free(C_check);
