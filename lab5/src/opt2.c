@@ -7,111 +7,137 @@
 
 
 MPI_Comm cannon_comm;
-int my_rank;
+int my_rank, cannon_rank;
+int mycoords[2];
 int w_size;
 double *A, *B ,*C;
+double *locA, *locB, *locC;
 unsigned int mat_size=0;
-int i,k,j,t;
+unsigned int local_size=0;
+int i,k,j;
 int left,right,up,down;
-int dims[2];
-int periods[2];
+int dims[2], periods[2];
+double buf[1];
+int shifts;
+
 
 double start=0, av=0;
 
 void init_grid(){
-
     dims[0]=0; dims[1]=0;
     periods[0]=1; periods[1]=1;
     MPI_Dims_create(w_size,2,dims); //Creates a division of processors in a cartesian grid
     MPI_Cart_create(MPI_COMM_WORLD,2, dims, periods, 1, &cannon_comm);//Makes a new communicator ordered in cartesian grid
-    MPI_Cart_shift(cannon_comm,0,1,&left,&right);
-    MPI_Cart_shift(cannon_comm,1,1,&up,&down);
-
-    /*
-    MPI_Comm_rank(grid_comm, *rank_grid);  // Determines the rank in the new comunicatior
-	MPI_Cart_coords(grid_comm, rank_grid, 2, *coord_grid); // Translate the rank to coordinates 
-
-    // Let's subdivide the communicator into subgroups which form lower-dimensional cartesian subgrids, In our case lines and columnes
-	MPI_Cart_sub(grid_comm,{0,1}, MPI_Comm *row_comm); // Lines
-	MPI_Comm_rank(row_comm,*rank_row);
-	MPI_Cart_coords(row_comm, rank_row, 2, *coord_row); 
-	
-	MPI_Cart_sub(grid_com,{1,0}, MPI_Comm *col_comm); // Columnes
-	MPI_Comm_rank(col_comm, *rank_col);
-	MPI_Cart_coords(col_comm, rank_col, 2, *coord_col); 
-    */
-
+    MPI_Comm_rank(cannon_comm, &cannon_rank);
+    MPI_Cart_coords(cannon_comm, cannon_rank, 2,  mycoords);
 }
-
-
 
 // Performs the horizontal shift in A 
 void shiftA(){
-
-    MPI_Sendrecv_replace(A,mat_size*mat_size,MPI_DOUBLE,left,0,right,0,cannon_comm,MPI_STATUS_IGNORE); //Sends and receives using a single buffer
-	// if (coord_grid[0] >= 1){
-	// 	int destination = rank_row - 1;
-	// 	int source = (rank_row +1)%sqrt(w_size);
-	// 	if (destination < 0){
-    //         destination = sqrt(w_size) - 1;
-    //     }
-
-	// 	MPI_Sendrecv_replace(&Me.a, 1,MPI_INT,destination,0,source,0,row_comm,MPI_STATUS_IGNORE); //Sends and receives using a single buffer
-	// }
-
-	MPI_Barrier(cannon_comm); // Blocks until all processes in the communicator have reached this routine.
-    
+    MPI_Cart_shift(cannon_comm, 1, 1, &left, &right);
+    MPI_Sendrecv_replace(locA, local_size * local_size, MPI_DOUBLE, left, 1, right, 1, cannon_comm, MPI_STATUS_IGNORE);
 }
 
 // Performs a Vertical shift in B 
 void shiftB(){
-
-    MPI_Sendrecv_replace(B,mat_size,MPI_INT,up,0,down,0,cannon_comm,MPI_STATUS_IGNORE); //Sends and receives using a single buffer
-	// if (coord_grid[1] >= 1){
-	// 	int destination = rank_col - 1;
-	// 	int source = (rank_col +1)%sqrt(w_size);
-	// 	if (destination < 0){
-    //         destination = sqrt(w_size) - 1;
-    //     } 
-
-	// 	MPI_Sendrecv_replace(&Me.b, 1,MPI_INT,destination,0,source,0,col_comm,MPI_STATUS_IGNORE); //Sends and receives using a single buffer
-	// }
-
-	MPI_Barrier(cannon_comm); // Blocks until all processes in the communicator have reached this routine.
-
+    MPI_Cart_shift(cannon_comm, 0, 1, &up, &down);
+    MPI_Sendrecv_replace(locB, local_size * local_size, MPI_DOUBLE, up, 1, down, 1, cannon_comm, MPI_STATUS_IGNORE);
 }
 
 // Depending of the position of the processors inside the grid, it shifts them horizontaly
 void preskewingA(){
 
-    for(i = 0; i < mat_size; i++)
-	{
-        for(j = 0; j < i ; j++){
-		    shiftA();
-        }
-	}
+    for (i = 0; i < local_size; i++){
 
+        shifts = mycoords[0] * local_size + i;
+
+        for(j = 0; j < shifts; j++){
+            buf[0] = locA[i*local_size];
+            MPI_Cart_shift(cannon_comm, 1, 1, &left, &right);
+            MPI_Sendrecv_replace(&buf, 1, MPI_DOUBLE, left, 0, right, 0, cannon_comm, MPI_STATUS_IGNORE);
+            for( k = 0; k < local_size; k++){
+                locA[i * local_size + k] = locA[i *  local_size + k  + 1];
+            } 
+
+            locA[local_size * (i+1) - 1] = buf[0];
+           
+        }
+    }
 }
 
 // Depending of the position of the processors inside the grid, it shifts them Vertically
 void preskewingB(){
 
-    for(i = 0; i < mat_size; i++)
-	{
-        for(j = 0; j < i ; j++){
-		    shiftB();
-        }
-	}
+    for (i = 0; i < local_size; i++){
 
+        shifts = mycoords[1] * local_size + i;
+        
+        for(j = 0; j < shifts; j++){
+            buf[0] = locB[i];
+            MPI_Cart_shift(cannon_comm, 0, 1, &up, &down);
+            MPI_Sendrecv_replace(&buf, 1, MPI_DOUBLE, up, 1, down, 1, cannon_comm, MPI_STATUS_IGNORE);
+            for( k = 0; k < local_size-1; k++){
+                locB[k *local_size + i] = locB[(k+1) *  local_size + i];
+            } 
+
+            locB[local_size * (local_size-1) + i] = buf[0];
+           
+        }
+    }
+}
+
+// Depending of the position of the processors inside the grid, it shifts them horizontaly
+void postskewingA(){
+   
+    for (i = 0; i < local_size; i++){
+
+        shifts = mycoords[0] * local_size + i;
+        shifts = (mat_size - shifts)%mat_size;
+
+        for(j = 0; j < shifts; j++){
+            buf[0] = locA[i*local_size];
+            MPI_Cart_shift(cannon_comm, 1, 1, &left, &right);
+            MPI_Sendrecv_replace(&buf, 1, MPI_DOUBLE, left, 0, right, 0, cannon_comm, MPI_STATUS_IGNORE);
+            for( k = 0; k < local_size; k++){
+                locA[i * local_size + k] = locA[i *  local_size + k  + 1];
+            } 
+
+            locA[local_size * (i+1) - 1] = buf[0];
+           
+        }
+    }
+}
+
+// Depending of the position of the processors inside the grid, it shifts them Vertically
+void postskewingB(){
+
+    for (i = 0; i < local_size; i++){
+
+        shifts = mycoords[1] * local_size + i;
+        shifts = (mat_size - shifts)%mat_size;
+
+        for(j = 0; j < shifts; j++){
+            buf[0] = locB[i];
+            MPI_Cart_shift(cannon_comm, 0, 1, &up, &down);
+            MPI_Sendrecv_replace(&buf, 1, MPI_DOUBLE, up, 1, down, 1, cannon_comm, MPI_STATUS_IGNORE);
+            for( k = 0; k < local_size-1; k++){
+                locB[k *local_size + i] = locB[(k+1) *  local_size + i];
+            } 
+
+            locB[local_size * (local_size-1) + i] = buf[0];
+           
+        }
+    }    
 }
 
 
 int main(int argc, char *argv[]){
-
-    MPI_Init(&argc, &argv);
+    
+    MPI_Init(&argc, &argv); // Initialize MPI
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank); // Determines the rank of the calling process in the communicator
-    MPI_Comm_size(MPI_COMM_WORLD, &w_size); // Determines the size of the group associated with a communicator
-
+    MPI_Comm_size(MPI_COMM_WORLD, &w_size); // Determines the w_size of the group associated with a communicator
+     
+    // Gather the matrix size
     if(argc != 2){
         printf("usage: %s matrix_size\n",argv[0]);
         MPI_Finalize();
@@ -121,48 +147,100 @@ int main(int argc, char *argv[]){
         mat_size = atoi(argv[1]);
     }
 
-    //if(my_rank == 0){
+    // Initialize the matrices in rank 0
+    if (my_rank == 0){
+        A = allocMatrix(mat_size);
+        B = allocMatrix(mat_size);
+        C = allocMatrix(mat_size);
 
-    A = allocMatrix(mat_size);
-    B = allocMatrix(mat_size);
-    C = allocMatrix(mat_size);
-
-    initMatrix(mat_size, A);
-    initMatrix(mat_size, B);
-    initMatrixZero(mat_size, C);
-
-    //buf=(double*)malloc(mat_size*mat_size*sizeof(double));
-
-    init_grid();
-
+        initMatrix(mat_size, A);
+        initMatrix(mat_size, B);
+        initMatrixZero(mat_size, C);
+    }
+   
     start = MPI_Wtime();
 
+    // Initialize the cartesian grid and creates the new comunicator
+    init_grid();
+
+    // Computes the local_size of each processor
+    local_size = mat_size/dims[0]; 
+
+    // Allocate and initialize the block matrices 
+    locA = allocMatrix(local_size);
+    locB = allocMatrix(local_size);
+    locC = allocMatrix(local_size);
+
+    initMatrixZero(local_size, locA);
+    initMatrixZero(local_size, locB);
+    initMatrixZero(local_size, locC);
+
+    // Create datatype to describe the subarrays of the global array
+	int globalSize[2] = { mat_size, mat_size };
+	int localSize[2] = { local_size, local_size };
+	int starts[2] = { 0,0 };
+	MPI_Datatype type, subarrtype;
+	MPI_Type_create_subarray(2, globalSize, localSize, starts, MPI_ORDER_C, MPI_DOUBLE, &type);
+	MPI_Type_create_resized(type, 0, local_size * sizeof(double), &subarrtype);
+	MPI_Type_commit(&subarrtype);
+
+    // Scatter the array to all processors
+	int* sendCounts = (int*)malloc(sizeof(int) * w_size);
+	int* displacements = (int*)malloc(sizeof(int) * w_size);
+
+	if (my_rank == 0) {
+        int i,j;
+		for (i = 0; i < w_size; i++) {
+			sendCounts[i] = 1;
+		}
+		int disp = 0;
+		for (i = 0; i < dims[0]; i++) {
+			for (j = 0; j < dims[0]; j++) {
+				displacements[i * dims[0] + j] = disp;
+				disp += 1;
+			}
+			disp += (local_size-1) * dims[0];
+		}
+
+	}
+
+    MPI_Scatterv(A, sendCounts, displacements, subarrtype, locA, mat_size * mat_size / (w_size), MPI_DOUBLE,0, MPI_COMM_WORLD);
+	MPI_Scatterv(B, sendCounts, displacements, subarrtype, locB, mat_size * mat_size / (w_size), MPI_DOUBLE,0, MPI_COMM_WORLD);
+   
+    // Perform Preskewing A & B
     preskewingA();
     preskewingB();
 
-    for(t = 0; t < dims[0]; t++){
-        for(i=0;i<mat_size;i++)
-            for(k=0;k<mat_size;k++)
-                for(j=0;j<mat_size;j++)
-                    C[i*mat_size+j] += A[i*mat_size+k] * B[k*mat_size+j];
+    // Perform the multiplication of the matrices
+    for(i = 0; i < dims[0]; i++){
+        sequentialMatrixMultiplication_REF(local_size,locA,locB,locC);
         shiftA();
         shiftB();
     }
 
-    preskewingA();
-    preskewingB();
+    // Perform Postskewing A & B
+    postskewingA();
+    postskewingB();
+
+    // Gather local matrices
+    MPI_Gatherv(locC, mat_size * mat_size / w_size, MPI_DOUBLE, C, sendCounts, displacements, subarrtype, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(locA, mat_size * mat_size / w_size, MPI_DOUBLE, A, sendCounts, displacements, subarrtype, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(locB, mat_size * mat_size / w_size, MPI_DOUBLE, B, sendCounts, displacements, subarrtype, 0, MPI_COMM_WORLD);
+
+    // Print time and the three final matrices 
+    if(my_rank == 0){
+    int time = MPI_Wtime() - start;
+    printf("Time: %.4fs\n",time);
 
     printMatrix(mat_size, A);
     printMatrix(mat_size, B);
     printMatrix(mat_size, C);
-
-    int time = MPI_Wtime() - start;
-    printf("Time: %.4fs\n",time);
     
     free(A);
     free(B);
     free(C);
-    //}
+    }
+
 
     MPI_Finalize();
     return 0;
