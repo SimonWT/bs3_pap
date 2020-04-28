@@ -10,11 +10,6 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
 {
     MPI_Status status;
 
-    if (rank == 0){
-        printMatrix(dimension, A);
-        printMatrix(dimension, B);
-    }
-
     int r, n;
     n = dimension;
     r = n / P;    
@@ -29,33 +24,17 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
     // Distribute the B rows to process
     MPI_Scatter( B, r * n, MPI_DOUBLE, tempS, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
 
-    printf("(%d)", rank);
-    int f, u;
-    for(f = 0; f< r; f++){
-        for(u = 0; u < n; u++){
-            printf("%.1f ", tempS[f][u]);
-        }
-        printf("\n");
-    }
-
     int step = 0;
     for(step = 0; step < P; step++){
         //Send the part of B to next process
         MPI_Send(tempS, r * n, MPI_DOUBLE, (rank + 1) % P, 0, MPI_COMM_WORLD);
         //Recive the part of B to previus process
+
         int src = (rank - 1) % P;
         if (rank == 0)
             src = P - 1;
         MPI_Recv(tempR, r * n, MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &status);
 
-        printf("(%d). AFTER\n", rank);
-        for(f = 0; f< r; f++){
-            for(u = 0; u < n; u++){
-                printf("%.1f ", tempS[f][u]);
-            }
-            printf("\n");
-        }
-    
         int block = (rank - step) % P;
         if (block < 0)
             block = P + block;
@@ -75,6 +54,7 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
             }
         }
 
+        //set tempS <- tempR
         int t, y;
         for(t=0; t < r; t++){
             for(y= 0; y < n; y++) {
