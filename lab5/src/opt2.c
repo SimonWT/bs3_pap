@@ -160,7 +160,7 @@ int main(int argc, char *argv[]){
    
     start = MPI_Wtime();
 
-    // Initialize the cartesian grid and creates the new comunicator
+    // Initialize the cartesian grid and creates the new communicator
     init_grid();
 
     // Computes the local_size of each processor
@@ -175,7 +175,7 @@ int main(int argc, char *argv[]){
     initMatrixZero(local_size, locB);
     initMatrixZero(local_size, locC);
 
-    // Create datatype to describe the subarrays of the global array
+    // Create datatype to describe the submatrices of the global matrix
 	int globalSize[2] = { mat_size, mat_size };
 	int localSize[2] = { local_size, local_size };
 	int starts[2] = { 0,0 };

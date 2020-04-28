@@ -38,13 +38,13 @@ void initMatrix(int dimension, double *A)
 #endif
 
     for (i = 0; i < dimension; i++) {
-        sum = i*j;
+        //sum = i*j;
         for (j = 0; j < dimension; j++) {
 #ifdef RINIT
             A[i*dimension + j] = rand() % dimension;
 #else
-            A[i*dimension + j] = sum+j;
-            //A[i*dimension + j] = 2;
+            //A[i*dimension + j] = sum+j;
+            A[i*dimension + j] = 2;
 #endif
         }
     }
