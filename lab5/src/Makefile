@@ -8,7 +8,7 @@ HEADER_FILES = $(wildcard *.h)
 
 EXTRA_SRC = utils.c
 
-RAND_INIT=1
+RAND_INIT=0
 
 CHECK_CORRECT=0
 

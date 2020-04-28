@@ -32,16 +32,18 @@ void initMatrix(int dimension, double *A)
 {
     int i = 0;
     int j = 0;
-
+    int sum;
 #ifdef RINIT
     srand(time(NULL));
 #endif
 
     for (i = 0; i < dimension; i++) {
+        //sum = i*j;
         for (j = 0; j < dimension; j++) {
 #ifdef RINIT
             A[i*dimension + j] = rand() % dimension;
 #else
+            //A[i*dimension + j] = sum+j;
             A[i*dimension + j] = 2;
 #endif
         }
