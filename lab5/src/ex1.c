@@ -10,10 +10,15 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
 {
     MPI_Status status;
 
+    if (rank == 0){
+        printMatrix(dimension, A);
+        printMatrix(dimension, B);
+    }
+
     int r, n;
     n = dimension;
     r = n / P;    
-    double tempS[r][n], tempR[r][n], distA[r][n], distC[n][n];
+    double tempS[r][n], tempR[r][n], distA[r][n], distC[r][n];
 
     // Distribute the A rows to process
     MPI_Scatter( A, r * n, MPI_DOUBLE, distA, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
@@ -24,14 +29,36 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
     // Distribute the B rows to process
     MPI_Scatter( B, r * n, MPI_DOUBLE, tempS, r * n, MPI_DOUBLE, 0, MPI_COMM_WORLD); 
 
+    printf("(%d)", rank);
+    int f, u;
+    for(f = 0; f< r; f++){
+        for(u = 0; u < n; u++){
+            printf("%.1f ", tempS[f][u]);
+        }
+        printf("\n");
+    }
+
     int step = 0;
     for(step = 0; step < P; step++){
         //Send the part of B to next process
-        MPI_Send(tempS, r * n, MPI_DOUBLE, (rank+1) % P, rank, MPI_COMM_WORLD);
+        MPI_Send(tempS, r * n, MPI_DOUBLE, (rank + 1) % P, 0, MPI_COMM_WORLD);
         //Recive the part of B to previus process
-        MPI_Recv(tempR, r * n, MPI_DOUBLE, (rank-1) % P, (rank-1) % P, MPI_COMM_WORLD, &status);
+        int src = (rank - 1) % P;
+        if (rank == 0)
+            src = P - 1;
+        MPI_Recv(tempR, r * n, MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &status);
+
+        printf("(%d). AFTER\n", rank);
+        for(f = 0; f< r; f++){
+            for(u = 0; u < n; u++){
+                printf("%.1f ", tempS[f][u]);
+            }
+            printf("\n");
+        }
     
-        int block = abs((rank - step) % P);
+        int block = (rank - step) % P;
+        if (block < 0)
+            block = P + block;
 
         //locl computation C
         int l = 0;
@@ -42,7 +69,7 @@ void parallelMatrixMultiplication(int rank, int P, int dimension, double *A, dou
             for( i = 0; i < r; i++){
                 for( j = 0; j < r; j++ ) {
                     for(k = 0; k < r; k++ ){ 
-                        distC[i][ l * r + j] = distC[i][ l * r + j] + distA[i][block * r + k] * tempS[k][l*r+j];
+                        distC[i][ l * r + j] = distC[i][ l * r + j] + distA[i][block * r + k] * tempS[k][l * r + j];
                     }
                 }
             }
